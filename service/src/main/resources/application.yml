@@ -1,0 +1,35 @@
+spring:
+  application:
+    name: market-data-platform
+
+server:
+  port: 8080
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,dataFreshness
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+info:
+  app:
+    name: ${spring.application.name}
+    description: Energy market data platform (portfolio project)
+    version: 0.0.1
+
+mdp:
+  data:
+    freshness:
+      threshold: 60m
