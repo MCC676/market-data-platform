@@ -33,3 +33,5 @@ mdp:
   data:
     freshness:
       threshold: 60m
+      watermark-path: ${MDP_SILVER_WATERMARK:../pipeline/warehouse/_watermarks/shipments.json}
+      watermark-poll: 30s

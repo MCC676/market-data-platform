@@ -5,9 +5,10 @@ role: **Java 21 + Spring Boot** services, **Kubernetes** deployment, **Prometheu
 Grafana** observability, and **data freshness as a runtime signal** — the same idea
 as a data-quality check, but wired into health probes and alerting.
 
-> **Status:** Phases 1–4 are complete and verified: the service runs locally and
-> on a kind cluster with Prometheus, Alertmanager and Grafana. The Spark + Iceberg
-> pipeline is scaffolded (`pipeline/`) and will be implemented in Phase 5.
+> **Status:** Phases 1–5 are complete and verified: the service runs locally and
+> on a kind cluster with Prometheus, Alertmanager and Grafana, and the Spark +
+> Iceberg job builds bronze/silver/gold tables and publishes the freshness
+> watermark the service reads.
 
 ## What it demonstrates
 
@@ -22,14 +23,15 @@ as a data-quality check, but wired into health probes and alerting.
 | Grafana provisioning + dashboard as code | `infra/grafana/` |
 | Kubernetes probes, resources, ServiceMonitor | `infra/k8s/` |
 | CI: build, test, image | `.github/workflows/ci.yml` |
-| Lakehouse design (bronze/silver/gold on Iceberg) | `pipeline/README.md` |
+| Spark + Iceberg job: bronze → silver MERGE → gold | `pipeline/` |
+| Shared freshness watermark consumed by every replica | `pipeline/.../IngestShipmentsJob.java`, `service/.../SilverWatermarkPoller.java` |
 
 ## Layout
 
 ```
 market-data-platform/
 ├─ service/        Spring Boot API (Maven Wrapper included)
-├─ pipeline/       Spark + Iceberg job (scaffold)
+├─ pipeline/       Spark + Iceberg job, sample extract, Docker runner
 ├─ infra/          Docker Compose, Prometheus, Alertmanager, Grafana, K8s
 ├─ docs/           architecture.md, runbook.md, adr/
 └─ .github/        CI workflow
@@ -47,6 +49,19 @@ MAVEN_USER_HOME="$HOME/.m2" ./mvnw spring-boot:run
 > **Windows / Git Bash note:** this machine sets `HOME=/z/`. Always export
 > `MAVEN_USER_HOME="C:/Users/mccanto/.m2"` before running `./mvnw`, otherwise the
 > wrapper tries to create `/z/.m2` and fails with "Permission denied".
+
+### Pipeline (Spark + Iceberg)
+
+```bash
+./pipeline/run-docker.sh
+```
+
+Runs in the official Spark 4.1.2 image (local JDK 23 is not supported by Spark 4.x).
+Tables land in `pipeline/warehouse/` (`bronze`, `silver`, `gold`), the quality report
+in `_quality/latest.json`, and the freshness watermark in `_watermarks/shipments.json`.
+Re-running is idempotent: silver stays at 6 rows while bronze grows.
+
+> First run pulls the Spark image (~700 MB) plus the Iceberg runtime (~50 MB).
 
 ### Full observability stack
 
@@ -117,6 +132,10 @@ kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090:909
 | `mdp_ingest_records_total` | counter | Total records loaded by ingestion |
 | `http_server_requests_seconds_*` | histogram | HTTP latency/rate by `uri`, `status` |
 
+Freshness is fed by two sources: `POST /api/v1/shipments/ingest` (local simulation)
+and the shared watermark written by the Spark job, polled every 30 s. The watermark
+is what keeps replicas consistent; the in-memory ingest remains for local demos.
+
 Alerts (`infra/prometheus/alerts.yml`):
 
 - `MdpServiceDown` — Prometheus cannot scrape the service for 1 minute.
@@ -142,14 +161,17 @@ cd service
 MAVEN_USER_HOME="$HOME/.m2" ./mvnw verify
 ```
 
-7 tests: context load, shipment service behaviour, and the freshness health
-contributor (UP when fresh, DOWN when stale).
+11 tests: context load, shipment service behaviour, the freshness health
+contributor (UP when fresh, DOWN when stale), and the watermark poller
+(advances on newer watermarks, ignores older/missing/malformed files).
 
 ## Configuration
 
 | Property | Env var | Default |
 |---|---|---|
 | `mdp.data.freshness.threshold` | `MDP_DATA_FRESHNESS_THRESHOLD` | `60m` |
+| `mdp.data.freshness.watermark-path` | `MDP_SILVER_WATERMARK` | `../pipeline/warehouse/_watermarks/shipments.json` |
+| `mdp.data.freshness.watermark-poll` | `MDP_DATA_FRESHNESS_WATERMARKPOLL` | `30s` |
 | `server.port` | `SERVER_PORT` | `8080` |
 
 ## Roadmap
@@ -160,8 +182,8 @@ contributor (UP when fresh, DOWN when stale).
 | F2 | Docker + CI | Done (image built and loaded into kind) |
 | F3 | Metrics, Actuator, Grafana dashboard | Done |
 | F4 | Kubernetes + ServiceMonitor + PrometheusRule | Done (kind, verified end-to-end) |
-| F5 | Spark + Iceberg pipeline (bronze/silver/gold) | Scaffolded |
-| F6 | Automated data-quality checks + alerts | Partial (`dataFreshness`) |
+| F5 | Spark + Iceberg pipeline (bronze/silver/gold) | Done (local Docker; shared watermark) |
+| F6 | Automated data-quality checks + alerts | Partial (quality report + freshness; no alerts on quality counters yet) |
 | F7 | ADRs, runbook, English demo | Docs done, demo pending |
 
 ## Design decisions

@@ -1,45 +1,94 @@
 # mdp-pipeline
 
-Spark + Iceberg ingestion job. **Scaffolded, implemented in Phase 5.**
+Spark + Iceberg ingestion job (Phase 5).
 
-## Target data flow
+## Data flow
 
 ```
-CSV/Parquet extract (EXACTUS)
+extracts/shipments_extract.csv (EXACTUS-like)
         │
         ▼
-bronze.shipments_raw       append-only, as landed
-        │  dedup + schema checks
+bronze.shipments_raw          append-only, as landed, partitioned by day(ingested_at)
+        │  reject null ids, dedup by id (latest updated_at wins)
         ▼
-silver.shipments           one row per shipment, current state
-        │  aggregation
+silver.shipments              one row per shipment, MERGE INTO by id
+        │  full rebuild
         ▼
-gold.shipment_daily_metrics   amount, count, status distribution per day
+gold.shipment_daily_metrics   count and amount per day and status
 ```
+
+Each successful run also writes:
+
+- `warehouse/_watermarks/shipments.json` — shared freshness watermark read by the API.
+- `warehouse/_quality/latest.json` — extracted / rejected / duplicate / invalid-status counts.
 
 ## Design rules
 
-- Every write is **idempotent**: re-running a day must not duplicate rows.
-- Bronze keeps the raw payload and the ingestion timestamp (`ingested_at`).
-- Silver is keyed by `id` and merged with `MERGE INTO` on Iceberg.
-- Gold is derived; it can always be rebuilt from silver.
-- Each stage emits quality counters that the service can expose and alert on.
+- **Idempotent silver**: `MERGE INTO` on `id`, only updating when `updated_at` is newer.
+- **Append-only bronze**: re-runs grow bronze (it is the audit trail); silver does not duplicate.
+- **Rebuildable gold**: `INSERT OVERWRITE` from silver on every run.
+- Rejected rows (null/blank id) stay in bronze but never reach silver.
 
 ## Running
 
+The job needs Spark 4.x, which does not officially support the local JDK 23, so it
+runs inside the official Spark image (Linux, Java 21):
+
 ```bash
-# requires the spark profile; downloads ~400 MB on first run
-mvn -Pspark -q compile exec:java
+./pipeline/run-docker.sh
 ```
 
-Versions: Spark 4.1.2 (Scala 2.13), Iceberg 1.11.0.
+The script builds `target/mdp-pipeline.jar` with the `spark` Maven profile
+(Spark is `provided`, the image supplies it) and runs `spark-submit` with
+`--packages org.apache.iceberg:iceberg-spark-runtime-4.1_2.13:1.11.0`.
+The first run downloads the image and Iceberg (~700 MB + ~50 MB); the Ivy cache
+is kept in the `mdp-ivy-cache` Docker volume.
+
+Overrides: `EXTRACT` (path inside the container), `SPARK_MASTER`, `SPARK_IMAGE`,
+`ICEBERG_VERSION`.
+
+## Expected output
+
+On the sample extract (8 rows: 1 rejected, 1 duplicated id):
+
+```
+[mdp] extracted=8 rejected=1 duplicates=1 unique=6 invalidStatus=0 bronze=8 silver=6 gold=5
+```
+
+Run it twice: `bronze` grows to 16, `silver` stays at 6, `gold` stays at 5. That is
+the idempotency check.
+
+## Inspecting the lakehouse
+
+```bash
+docker run --rm -it --user root \
+  -v "$PWD/pipeline:/opt/mdp" -w /opt/mdp \
+  apache/spark:4.1.2-scala2.13-java21-python3-ubuntu \
+  /opt/spark/bin/spark-sql \
+    --packages org.apache.iceberg:iceberg-spark-runtime-4.1_2.13:1.11.0 \
+    --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions \
+    --conf spark.sql.catalog.mdp=org.apache.iceberg.spark.SparkCatalog \
+    --conf spark.sql.catalog.mdp.type=hadoop \
+    --conf spark.sql.catalog.mdp.warehouse=file:/opt/mdp/warehouse \
+    -e "SELECT * FROM mdp.silver.shipments ORDER BY id"
+```
 
 ## Status
 
 | Stage | Status |
 |---|---|
-| Bronze ingestion | TODO |
-| Silver merge | TODO |
-| Gold aggregation | TODO |
-| Quality checks | TODO |
-| MinIO/S3 wiring | TODO |
+| Bronze ingestion | Done |
+| Silver merge | Done |
+| Gold aggregation | Done |
+| Quality report | Done (counts written to `_quality/latest.json`) |
+| Shared freshness watermark | Done (consumed by the service) |
+| MinIO/S3 wiring | Pending |
+
+## Limitations
+
+- The hadoop catalog writes to the container's mounted filesystem; S3/MinIO is the
+  next step for a real cluster.
+- `spark-submit` runs in `local[2]`; a Kubernetes SparkApplication/Job manifest is
+  not included yet.
+- The API still serves its in-memory dataset; switching reads to silver is the next
+  phase.

@@ -16,9 +16,13 @@ Prometheus cannot scrape `app:8080/actuator/prometheus` for 1 minute.
 1. Confirm the signal:
    `curl -s http://localhost:8080/actuator/health/readiness`
 2. The pod should be `NotReady`; traffic must already be routed away.
-3. Trigger ingestion: `curl -X POST http://localhost:8080/api/v1/shipments/ingest`
-4. If ingestion itself is the problem, check the pipeline job (Phase 5).
-5. Do **not** restart the service to clear the alert; it does not create data.
+3. Real path: run the pipeline, which writes a new shared watermark:
+   `./pipeline/run-docker.sh`
+4. Local-only path: `curl -X POST http://localhost:8080/api/v1/shipments/ingest`
+   (does not fix other replicas).
+5. If ingestion itself is the problem, check the quality report:
+   `cat pipeline/warehouse/_quality/latest.json`.
+6. Do **not** restart the service to clear the alert; it does not create data.
 
 ### MdpHighErrorRate (warning)
 5xx rate above 5% for 5 minutes.
@@ -42,7 +46,15 @@ cd service && MAVEN_USER_HOME="$HOME/.m2" ./mvnw verify
 # Kubernetes (kind/minikube)
 kubectl apply -k infra/k8s
 kubectl -n mdp get pods,svc
+
+# Pipeline (Spark + Iceberg in Docker)
+./pipeline/run-docker.sh
+cat pipeline/warehouse/_quality/latest.json
+cat pipeline/warehouse/_watermarks/shipments.json
 ```
+
+The pipeline takes ~20 s of Spark work after the image is cached. Two consecutive
+runs must report the same `silverRows` and `goldRows`; only `bronzeRows` grows.
 
 ## Local kind cluster
 
@@ -63,8 +75,10 @@ kubectl -n mdp describe pod -l app=mdp-service | tail -30
 ```
 
 Remember that readiness includes `dataFreshness`: a pod older than the threshold
-(60m by default) is `NotReady` even though the process is healthy. Trigger
-ingestion or restart the deployment to reset the local watermark.
+(60m by default) is `NotReady` even though the process is healthy. Run the pipeline
+to publish a new watermark; restarting only resets local state and breaks the
+shared-freshness guarantee. The kind manifests do not mount the warehouse yet, so
+in-cluster pods fall back to the local ingest watermark.
 
 ## Known local gotchas
 
