@@ -9,7 +9,7 @@ extracts/shipments_extract.csv (EXACTUS-like)
         │
         ▼
 bronze.shipments_raw          append-only, as landed, partitioned by day(ingested_at)
-        │  reject null ids, dedup by id (latest updated_at wins)
+        │  reject null ids and unknown statuses, dedup by id (latest updated_at wins)
         ▼
 silver.shipments              one row per shipment, MERGE INTO by id
         │  full rebuild
@@ -27,7 +27,8 @@ Each successful run also writes:
 - **Idempotent silver**: `MERGE INTO` on `id`, only updating when `updated_at` is newer.
 - **Append-only bronze**: re-runs grow bronze (it is the audit trail); silver does not duplicate.
 - **Rebuildable gold**: `INSERT OVERWRITE` from silver on every run.
-- Rejected rows (null/blank id) stay in bronze but never reach silver.
+- Rejected rows (null/blank id) and rows with an unknown status stay in bronze but
+  never reach silver; both counts are reported separately.
 
 ## Running
 
@@ -49,14 +50,23 @@ Overrides: `EXTRACT` (path inside the container), `SPARK_MASTER`, `SPARK_IMAGE`,
 
 ## Expected output
 
-On the sample extract (8 rows: 1 rejected, 1 duplicated id):
+On the default extract (7 rows, 1 duplicated id):
 
 ```
-[mdp] extracted=8 rejected=1 duplicates=1 unique=6 invalidStatus=0 bronze=8 silver=6 gold=5
+[mdp] extracted=7 rejected=0 duplicates=1 unique=6 invalidStatus=0 bronze=7 silver=6 gold=5
 ```
 
-Run it twice: `bronze` grows to 16, `silver` stays at 6, `gold` stays at 5. That is
-the idempotency check.
+Run it twice: `bronze` grows, `silver` stays at 6, `gold` stays at 5. That is the
+idempotency check.
+
+To exercise the quality gate, run the invalid extract (unknown status + missing id):
+
+```bash
+EXTRACT=/opt/mdp/extracts/shipments_extract_invalid.csv ./pipeline/run-docker.sh
+```
+
+It reports `rejected=1 invalidStatus=1` and adds nothing to silver; the next
+normal run resets both counters to 0.
 
 ## Inspecting the lakehouse
 

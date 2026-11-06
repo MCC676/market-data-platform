@@ -19,6 +19,36 @@ groups:
           summary: Shipment data is stale
           description: No successful ingestion for {{ $value | humanizeDuration }} (threshold 1h).
 
+      - alert: MdpQualityRejectedRows
+        expr: mdp_quality_rejected_rows{job="mdp-service"} > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Pipeline rejected rows for a missing id
+          description: The last run rejected {{ $value }} row(s); inspect pipeline/warehouse/_quality/latest.json.
+
+      - alert: MdpQualityInvalidStatus
+        expr: mdp_quality_invalid_status_rows{job="mdp-service"} > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Pipeline found an unknown shipment status
+          description: The last run excluded {{ $value }} row(s) with a status outside the allowed set.
+
+      - alert: MdpQualityEmptySilver
+        expr: |
+          (mdp_quality_silver_rows{job="mdp-service"} == 0)
+          and
+          (time() - mdp_quality_report_timestamp_seconds{job="mdp-service"} < 3600)
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: Silver table is empty after a recent run
+          description: A quality report was produced in the last hour but silver has 0 rows.
+
       - alert: MdpHighErrorRate
         expr: |
           sum(rate(http_server_requests_seconds_count{job="mdp-service",status=~"5..",uri!~"/actuator/.*"}[5m]))

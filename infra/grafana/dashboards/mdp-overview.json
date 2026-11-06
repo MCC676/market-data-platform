@@ -111,6 +111,77 @@
         "legend": { "displayMode": "list", "placement": "bottom" },
         "tooltip": { "mode": "multi" }
       }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Quality: rejected and invalid rows",
+      "description": "Values from the last pipeline quality report.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mdp_quality_rejected_rows{application=\"market-data-platform\"}",
+          "legendFormat": "rejected (missing id)",
+          "range": true,
+          "editorMode": "code"
+        },
+        {
+          "refId": "B",
+          "expr": "mdp_quality_invalid_status_rows{application=\"market-data-platform\"}",
+          "legendFormat": "invalid status",
+          "range": true,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Lakehouse rows",
+      "description": "Table sizes reported by the last pipeline run.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mdp_quality_bronze_rows{application=\"market-data-platform\"}",
+          "legendFormat": "bronze",
+          "range": true,
+          "editorMode": "code"
+        },
+        {
+          "refId": "B",
+          "expr": "mdp_quality_silver_rows{application=\"market-data-platform\"}",
+          "legendFormat": "silver",
+          "range": true,
+          "editorMode": "code"
+        },
+        {
+          "refId": "C",
+          "expr": "mdp_quality_gold_rows{application=\"market-data-platform\"}",
+          "legendFormat": "gold",
+          "range": true,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      }
     }
   ],
   "schemaVersion": 39,

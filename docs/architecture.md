@@ -50,6 +50,16 @@
 A run also writes `_quality/latest.json` (extracted, rejected, duplicate and
 invalid-status counts) and `_watermarks/shipments.json` on success.
 
+### Quality gates
+
+Rows with a null/blank `id`, or with a `status` outside
+`IN_TRANSIT|DELIVERED|PENDING_DOCS|CANCELLED`, stay in bronze but are excluded
+from silver. They are counted separately so the failure mode is visible.
+
+`QualityReportPoller` reads the report every 30 s and publishes it as gauges
+(`mdp_quality_*`). Quality failures raise alerts but **never** change readiness
+(ADR 0004): a bad row does not prevent the API from serving the rows it has.
+
 ## Observability contract
 
 | Signal | Source | Consumer |
@@ -58,6 +68,7 @@ invalid-status counts) and `_watermarks/shipments.json` on success.
 | `mdp_data_lag_seconds` | `DataFreshnessTracker` gauge, fed by ingest and the silver watermark | Grafana, `MdpDataStale` alert |
 | `mdp_data_last_ingestion_timestamp_seconds` | gauge | PromQL `time() - metric` |
 | `mdp_ingest_records_total` | ingestion counter | Grafana |
+| `mdp_quality_*` | `QualityReportPoller` gauges from `_quality/latest.json` | Grafana, quality alerts |
 | `/actuator/health/liveness` | `livenessState`, `ping` | Kubernetes liveness probe |
 | `/actuator/health/readiness` | `readinessState`, `dataFreshness` | Kubernetes readiness probe |
 
@@ -93,6 +104,6 @@ iteration can read the Iceberg watermark table or a catalog API instead.
 1. Land the EXACTUS extract in `bronze.shipments_raw` (append-only). **Done.**
 2. Merge into `silver.shipments` keyed by shipment id (idempotent). **Done.**
 3. Build `gold.shipment_daily_metrics`. **Done.**
-4. Emit quality metrics from the job and expose them to Prometheus. **Partial**
-   (counts are written to `_quality/latest.json`; no Prometheus exporter yet).
+4. Emit quality metrics from the job and expose them to Prometheus. **Done**
+   (report file + `mdp_quality_*` gauges + 3 quality alerts).
 5. Point the service at silver; `ingest` becomes a real pipeline trigger. **Pending.**

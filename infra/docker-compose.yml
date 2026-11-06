@@ -10,6 +10,7 @@ services:
     environment:
       MDP_DATA_FRESHNESS_THRESHOLD: 60m
       MDP_SILVER_WATERMARK: /data/silver/_watermarks/shipments.json
+      MDP_QUALITY_REPORT: /data/silver/_quality/latest.json
     volumes:
       - ../pipeline/warehouse:/data/silver:ro
     restart: unless-stopped

@@ -82,7 +82,12 @@ public final class IngestShipmentsJob {
 		Dataset<Row> valid = raw.filter(col("id").isNotNull().and(trim(col("id")).notEqual("")));
 		long rejectedRows = extractedRows - valid.count();
 
-		Dataset<Row> deduped = valid
+		// Quality gate: a row with an unknown status is not allowed into silver.
+		Dataset<Row> validStatus = valid.filter(col("status").isNotNull()
+				.and(col("status").isin(ALLOWED_STATUSES.toArray(String[]::new))));
+		long invalidStatusRows = valid.count() - validStatus.count();
+
+		Dataset<Row> deduped = validStatus
 				.withColumn("rn", row_number().over(
 						partitionBy("id").orderBy(col("updated_at").desc_nulls_last(), col("ingested_at").desc())))
 				.filter(col("rn").equalTo(1))
@@ -90,11 +95,7 @@ public final class IngestShipmentsJob {
 				.select("id", "purchase_order", "supplier", "status", "amount", "updated_at", "ingested_at");
 
 		long uniqueRows = deduped.count();
-		long duplicateRows = valid.count() - uniqueRows;
-		long invalidStatusRows = deduped
-				.filter(col("status").isNull()
-						.or(col("status").isin(ALLOWED_STATUSES.toArray(String[]::new)).equalTo(false)))
-				.count();
+		long duplicateRows = validStatus.count() - uniqueRows;
 
 		deduped.createOrReplaceTempView("silver_updates");
 		spark.sql("""

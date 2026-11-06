@@ -31,6 +31,23 @@ Prometheus cannot scrape `app:8080/actuator/prometheus` for 1 minute.
 2. Reproduce with the failing `uri`.
 3. Roll back the last image tag if the rate started at a deploy.
 
+### MdpQualityRejectedRows / MdpQualityInvalidStatus (warning)
+The last pipeline report contains rows with a missing id or an unknown status.
+
+1. Read the report: `cat pipeline/warehouse/_quality/latest.json`.
+2. Find the offending rows in bronze (they are landed but not promoted):
+   query `mdp.bronze.shipments_raw` for the run's `ingested_at`.
+3. Fix the extract or the upstream mapping, then rerun `./pipeline/run-docker.sh`.
+   A clean run resets both gauges to 0 and the alerts resolve.
+
+### MdpQualityEmptySilver (critical)
+A report was produced within the last hour but silver has 0 rows.
+
+1. Check that the extract is not empty and that the report's `uniqueRows > 0`.
+2. `mdp_quality_rejected_rows` and `invalid_status_rows` will show whether the
+   rows were filtered out.
+3. Validate the Iceberg tables with `spark-sql` (see `pipeline/README.md`).
+
 ## Common operations
 
 ```bash
@@ -55,6 +72,12 @@ cat pipeline/warehouse/_watermarks/shipments.json
 
 The pipeline takes ~20 s of Spark work after the image is cached. Two consecutive
 runs must report the same `silverRows` and `goldRows`; only `bronzeRows` grows.
+
+Quality-gate check (expected: `rejected=1 invalidStatus=1`, silver unchanged):
+
+```bash
+EXTRACT=/opt/mdp/extracts/shipments_extract_invalid.csv ./pipeline/run-docker.sh
+```
 
 ## Local kind cluster
 

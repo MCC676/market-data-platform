@@ -35,3 +35,6 @@ mdp:
       threshold: 60m
       watermark-path: ${MDP_SILVER_WATERMARK:../pipeline/warehouse/_watermarks/shipments.json}
       watermark-poll: 30s
+    quality:
+      report-path: ${MDP_QUALITY_REPORT:../pipeline/warehouse/_quality/latest.json}
+      report-poll: 30s

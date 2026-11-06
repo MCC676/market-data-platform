@@ -25,6 +25,7 @@ as a data-quality check, but wired into health probes and alerting.
 | CI: build, test, image | `.github/workflows/ci.yml` |
 | Spark + Iceberg job: bronze → silver MERGE → gold | `pipeline/` |
 | Shared freshness watermark consumed by every replica | `pipeline/.../IngestShipmentsJob.java`, `service/.../SilverWatermarkPoller.java` |
+| Quality gates and quality metrics/alerts | `pipeline/.../IngestShipmentsJob.java`, `service/.../QualityReportPoller.java` |
 
 ## Layout
 
@@ -130,6 +131,9 @@ kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090:909
 | `mdp_data_lag_seconds` | gauge | Seconds since the last successful ingestion |
 | `mdp_data_last_ingestion_timestamp_seconds` | gauge | Epoch seconds of the last ingestion |
 | `mdp_ingest_records_total` | counter | Total records loaded by ingestion |
+| `mdp_quality_extracted_rows` / `rejected_rows` / `duplicate_rows` / `invalid_status_rows` | gauges | Last pipeline quality report |
+| `mdp_quality_bronze_rows` / `silver_rows` / `gold_rows` | gauges | Table sizes reported by the last run |
+| `mdp_quality_report_timestamp_seconds` | gauge | When the last quality report was produced |
 | `http_server_requests_seconds_*` | histogram | HTTP latency/rate by `uri`, `status` |
 
 Freshness is fed by two sources: `POST /api/v1/shipments/ingest` (local simulation)
@@ -141,6 +145,9 @@ Alerts (`infra/prometheus/alerts.yml`):
 - `MdpServiceDown` — Prometheus cannot scrape the service for 1 minute.
 - `MdpDataStale` — `mdp_data_lag_seconds > 3600` for 5 minutes.
 - `MdpHighErrorRate` — 5xx rate above 5% for 5 minutes.
+- `MdpQualityRejectedRows` — the last run rejected rows for a missing id (10 min).
+- `MdpQualityInvalidStatus` — the last run found an unknown status (10 min).
+- `MdpQualityEmptySilver` — a recent report shows silver with 0 rows (10 min).
 
 ### Health semantics
 
@@ -161,9 +168,10 @@ cd service
 MAVEN_USER_HOME="$HOME/.m2" ./mvnw verify
 ```
 
-11 tests: context load, shipment service behaviour, the freshness health
-contributor (UP when fresh, DOWN when stale), and the watermark poller
-(advances on newer watermarks, ignores older/missing/malformed files).
+14 tests: context load, shipment service behaviour, the freshness health
+contributor (UP when fresh, DOWN when stale), the watermark poller (advances on
+newer watermarks, ignores older/missing/malformed files), and the quality report
+poller (gauges, missing and malformed reports).
 
 ## Configuration
 
@@ -172,6 +180,8 @@ contributor (UP when fresh, DOWN when stale), and the watermark poller
 | `mdp.data.freshness.threshold` | `MDP_DATA_FRESHNESS_THRESHOLD` | `60m` |
 | `mdp.data.freshness.watermark-path` | `MDP_SILVER_WATERMARK` | `../pipeline/warehouse/_watermarks/shipments.json` |
 | `mdp.data.freshness.watermark-poll` | `MDP_DATA_FRESHNESS_WATERMARKPOLL` | `30s` |
+| `mdp.data.quality.report-path` | `MDP_QUALITY_REPORT` | `../pipeline/warehouse/_quality/latest.json` |
+| `mdp.data.quality.report-poll` | `MDP_DATA_QUALITY_REPORTPOLL` | `30s` |
 | `server.port` | `SERVER_PORT` | `8080` |
 
 ## Roadmap
@@ -183,7 +193,7 @@ contributor (UP when fresh, DOWN when stale), and the watermark poller
 | F3 | Metrics, Actuator, Grafana dashboard | Done |
 | F4 | Kubernetes + ServiceMonitor + PrometheusRule | Done (kind, verified end-to-end) |
 | F5 | Spark + Iceberg pipeline (bronze/silver/gold) | Done (local Docker; shared watermark) |
-| F6 | Automated data-quality checks + alerts | Partial (quality report + freshness; no alerts on quality counters yet) |
+| F6 | Automated data-quality checks + alerts | Done (reject unknown id/status, quality gauges, alerts) |
 | F7 | ADRs, runbook, English demo | Docs done, demo pending |
 
 ## Design decisions
@@ -193,3 +203,4 @@ See `docs/adr/`:
 - ADR 0001 — Java 21 and Spring Boot 4
 - ADR 0002 — Single repository with service, pipeline and infra
 - ADR 0003 — Data freshness affects readiness, never liveness
+- ADR 0004 — Quality failures alert, they do not affect readiness
