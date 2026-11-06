@@ -1,14 +1,16 @@
 # Market Data Platform
 
+[![ci](https://github.com/MCC676/market-data-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/MCC676/market-data-platform/actions/workflows/ci.yml)
+
 A portfolio project that exercises the stack of a senior backend / data platform
 role: **Java 21 + Spring Boot** services, **Kubernetes** deployment, **Prometheus /
 Grafana** observability, and **data freshness as a runtime signal** — the same idea
 as a data-quality check, but wired into health probes and alerting.
 
-> **Status:** Phases 1–5 are complete and verified: the service runs locally and
-> on a kind cluster with Prometheus, Alertmanager and Grafana, and the Spark +
-> Iceberg job builds bronze/silver/gold tables and publishes the freshness
-> watermark the service reads.
+> **Status:** Phases 1–7 are complete: the service runs locally and on a kind
+> cluster with Prometheus, Alertmanager and Grafana; the Spark + Iceberg job builds
+> bronze/silver/gold and publishes the freshness watermark; quality gates feed
+> metrics and alerts. See [docs/demo.md](docs/demo.md) for the walkthrough.
 
 ## What it demonstrates
 
@@ -34,9 +36,21 @@ market-data-platform/
 ├─ service/        Spring Boot API (Maven Wrapper included)
 ├─ pipeline/       Spark + Iceberg job, sample extract, Docker runner
 ├─ infra/          Docker Compose, Prometheus, Alertmanager, Grafana, K8s
-├─ docs/           architecture.md, runbook.md, adr/
+├─ demo/           Scripted end-to-end demo
+├─ docs/           architecture.md, runbook.md, demo.md, adr/
 └─ .github/        CI workflow
 ```
+
+## Demo
+
+```bash
+# with the API running (compose or spring-boot:run)
+BASE_URL=http://localhost:8080 ./demo/demo.sh
+```
+
+The script lists shipments, runs the pipeline, shows freshness and quality
+gauges, exercises the quality gate, and resets the counters with a clean run.
+The interview script and talking points are in [docs/demo.md](docs/demo.md).
 
 ## Quick start
 
@@ -194,7 +208,7 @@ poller (gauges, missing and malformed reports).
 | F4 | Kubernetes + ServiceMonitor + PrometheusRule | Done (kind, verified end-to-end) |
 | F5 | Spark + Iceberg pipeline (bronze/silver/gold) | Done (local Docker; shared watermark) |
 | F6 | Automated data-quality checks + alerts | Done (reject unknown id/status, quality gauges, alerts) |
-| F7 | ADRs, runbook, English demo | Docs done, demo pending |
+| F7 | ADRs, runbook, English demo | Done (`docs/demo.md`, `demo/demo.sh`) |
 
 ## Design decisions
 
